@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Cosmic Arcana</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <h1>Cosmic Arcana</h1>
+    <p class="disclaimer">
+      Readings are fiction and entertainment. They are not advice and not a factual claim about the
+      future.
+    </p>
+    <p id="session" class="meta">Not signed in (demo user for spreads).</p>
+    <div class="row">
+      <button id="github" type="button">GitHub</button>
+      <button id="google" type="button">Google</button>
+      <button id="logout" type="button">Sign out</button>
+    </div>
+    <label for="question">Question</label>
+    <textarea id="question" maxlength="1000" rows="4" placeholder="Ask a question"></textarea>
+    <button id="ask" type="button">Ask</button>
+    <p id="status" class="meta"></p>
+    <pre id="result"></pre>
+    <script src="config.js"></script>
+    <script src="popup.js"></script>
+  </body>
+</html>

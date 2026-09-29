@@ -1,0 +1,16 @@
+{
+  "manifest_version": 3,
+  "name": "Cosmic Arcana",
+  "description": "Fictional tarot asks. Not advice and not a claim about the future.",
+  "version": "0.0.1",
+  "action": {
+    "default_title": "Cosmic Arcana",
+    "default_popup": "popup.html"
+  },
+  "permissions": ["identity", "storage"],
+  "host_permissions": [
+    "http://127.0.0.1/*",
+    "http://localhost/*",
+    "https://*.auth0.com/*"
+  ]
+}

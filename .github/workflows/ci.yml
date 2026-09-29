@@ -1,0 +1,18 @@
+name: CI
+
+on:
+  push:
+    branches: [development, main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Manifest exists
+        run: test -f manifest.json && test -f popup.js
