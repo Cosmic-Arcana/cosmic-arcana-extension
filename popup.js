@@ -1,4 +1,4 @@
-const DEMO_USER_ID = globalThis.COSMIC_ARCANA?.demoUserId ?? '00000000-0000-4000-8000-000000000001';
+import { authorizeUrl, exchangeCode } from './auth.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -36,68 +36,37 @@ const renderSession = async () => {
     : 'Not signed in (demo user for spreads).';
 };
 
-const decodeJwtPayload = (token) => {
-  const part = token.split('.')[1];
-  if (!part) {
-    return {};
-  }
-  const padded = part.replace(/-/g, '+').replace(/_/g, '/');
-  return JSON.parse(atob(padded));
-};
-
 const login = async (connection) => {
-  const { auth0Domain, auth0ClientId } = globalThis.COSMIC_ARCANA ?? {};
-  if (!auth0Domain || !auth0ClientId) {
-    throw new Error('copy config.example.js to config.js and set Auth0 domain + SPA client id');
+  const config = globalThis.COSMIC_ARCANA ?? {};
+  if (!config.auth0Domain || !config.auth0ClientId || !config.auth0Audience) {
+    throw new Error(
+      'copy config.example.js to config.js and set Auth0 domain, SPA client id and API audience',
+    );
   }
 
   const verifier = randomString();
   const challenge = await sha256(verifier);
   const state = randomString();
-  const url = new URL(`https://${auth0Domain}/authorize`);
-  url.searchParams.set('client_id', auth0ClientId);
-  url.searchParams.set('redirect_uri', redirectUri());
-  url.searchParams.set('response_type', 'code');
-  url.searchParams.set('scope', 'openid profile email');
-  url.searchParams.set('code_challenge', challenge);
-  url.searchParams.set('code_challenge_method', 'S256');
-  url.searchParams.set('state', state);
-  url.searchParams.set('connection', connection);
 
   const redirected = await chrome.identity.launchWebAuthFlow({
-    url: url.toString(),
+    url: authorizeUrl({ config, redirectUri: redirectUri(), challenge, state, connection }),
     interactive: true,
   });
-  const redirectedUrl = new URL(redirected);
-  const code = redirectedUrl.searchParams.get('code');
+  const code = new URL(redirected).searchParams.get('code');
   if (!code) {
     throw new Error('no authorization code');
   }
 
-  const tokenResponse = await fetch(`https://${auth0Domain}/oauth/token`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({
-      grant_type: 'authorization_code',
-      client_id: auth0ClientId,
-      code_verifier: verifier,
-      code,
-      redirect_uri: redirectUri(),
-    }),
+  const session = await exchangeCode({
+    config,
+    code,
+    verifier,
+    redirectUri: redirectUri(),
+    connection,
+    fetchImpl: fetch,
+    now: Date.now(),
   });
-  const tokens = await tokenResponse.json();
-  if (!tokenResponse.ok) {
-    throw new Error(tokens.error_description || 'token exchange failed');
-  }
-
-  const claims = decodeJwtPayload(tokens.id_token);
-  await chrome.storage.local.set({
-    cosmicSession: {
-      sub: claims.sub,
-      connection,
-      idToken: tokens.id_token,
-    },
-  });
+  await chrome.storage.local.set({ cosmicSession: session });
   await renderSession();
 };
 
