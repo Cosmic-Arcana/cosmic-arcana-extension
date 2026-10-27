@@ -1,4 +1,11 @@
-import { AuthError, askBff, authorizeUrl, exchangeCode, freshSession } from './auth.js';
+import {
+  AuthError,
+  askBff,
+  authorizeUrl,
+  exchangeCode,
+  freshSession,
+  revokeRefreshToken,
+} from './auth.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -125,7 +132,13 @@ $('google').addEventListener('click', async () => {
 });
 
 $('logout').addEventListener('click', async () => {
-  await chrome.storage.local.remove('cosmicSession');
+  // Revoking is best effort: signing out locally must work offline too.
+  await revokeRefreshToken({
+    config: globalThis.COSMIC_ARCANA ?? {},
+    session: await loadSession(),
+    fetchImpl: fetch,
+  }).catch(() => {});
+  await clearSession();
   await renderSession();
 });
 
