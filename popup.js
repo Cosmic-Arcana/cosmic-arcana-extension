@@ -1,4 +1,4 @@
-import { authorizeUrl, exchangeCode } from './auth.js';
+import { AuthError, askBff, authorizeUrl, exchangeCode, freshSession } from './auth.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -19,9 +19,6 @@ const randomString = () => {
   return b64url(bytes);
 };
 
-const idempotencyKey = () =>
-  `e${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`;
-
 const redirectUri = () => chrome.identity.getRedirectURL('callback');
 
 const loadSession = async () => {
@@ -29,11 +26,15 @@ const loadSession = async () => {
   return cosmicSession ?? null;
 };
 
+const saveSession = (session) => chrome.storage.local.set({ cosmicSession: session });
+
+const clearSession = () => chrome.storage.local.remove('cosmicSession');
+
 const renderSession = async () => {
   const session = await loadSession();
   $('session').textContent = session?.sub
     ? `Signed in as ${session.sub} (${session.connection ?? 'auth0'})`
-    : 'Not signed in (demo user for spreads).';
+    : 'Not signed in.';
 };
 
 const login = async (connection) => {
@@ -66,30 +67,43 @@ const login = async (connection) => {
     fetchImpl: fetch,
     now: Date.now(),
   });
-  await chrome.storage.local.set({ cosmicSession: session });
+  await saveSession(session);
   await renderSession();
 };
 
-const createSpread = async (question) => {
-  const base = (globalThis.COSMIC_ARCANA?.tarotBaseUrl ?? '').replace(/\/$/, '');
-  if (!base) {
-    throw new Error('tarotBaseUrl is empty');
+const ask = async (question) => {
+  const config = globalThis.COSMIC_ARCANA ?? {};
+  if (!config.apiBaseUrl) {
+    throw new Error('apiBaseUrl is empty');
   }
-  const session = await loadSession();
-  const userId = DEMO_USER_ID;
-  const response = await fetch(`${base}/spreads`, {
-    method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-      'idempotency-key': idempotencyKey(),
-    },
-    body: JSON.stringify({ userId, question: question.trim() }),
-  });
-  const body = await response.json().catch(() => null);
-  if (!response.ok) {
-    throw new Error(`tarot ${response.status}`);
+  const stored = await loadSession();
+  if (!stored) {
+    throw new Error('Sign in to ask.');
   }
-  return { body, sessionSub: session?.sub ?? null };
+  const consent = $('consent').checked;
+  if (!consent) {
+    throw new Error('Tick the consent box to ask.');
+  }
+
+  try {
+    const { session, refreshed } = await freshSession({
+      config,
+      session: stored,
+      fetchImpl: fetch,
+      now: Date.now(),
+    });
+    if (refreshed) {
+      await saveSession(session);
+    }
+    return await askBff({ config, session, question, consent, fetchImpl: fetch });
+  } catch (error) {
+    if (error instanceof AuthError && ['invalid_grant', 'unauthorized'].includes(error.code)) {
+      await clearSession();
+      await renderSession();
+      throw new Error('Signed out. Sign in again.');
+    }
+    throw error;
+  }
 };
 
 $('github').addEventListener('click', async () => {
@@ -119,7 +133,7 @@ $('ask').addEventListener('click', async () => {
   $('status').textContent = '';
   $('result').textContent = '';
   try {
-    const { body } = await createSpread($('question').value);
+    const body = await ask($('question').value);
     $('result').textContent = JSON.stringify(body, null, 2);
   } catch (error) {
     $('status').textContent = error.message;
