@@ -60,7 +60,11 @@ const login = async (connection) => {
     url: authorizeUrl({ config, redirectUri: redirectUri(), challenge, state, connection }),
     interactive: true,
   });
-  const code = new URL(redirected).searchParams.get('code');
+  const params = new URL(redirected).searchParams;
+  if (params.get('state') !== state) {
+    throw new Error('sign-in response did not match the request');
+  }
+  const code = params.get('code');
   if (!code) {
     throw new Error('no authorization code');
   }
