@@ -11,7 +11,7 @@
       Readings are fiction and entertainment. They are not advice and not a factual claim about the
       future.
     </p>
-    <p id="session" class="meta">Not signed in (demo user for spreads).</p>
+    <p id="session" class="meta">Not signed in.</p>
     <div class="row">
       <button id="github" type="button">GitHub</button>
       <button id="google" type="button">Google</button>
@@ -19,10 +19,14 @@
     </div>
     <label for="question">Question</label>
     <textarea id="question" maxlength="1000" rows="4" placeholder="Ask a question"></textarea>
+    <label class="consent">
+      <input id="consent" type="checkbox" />
+      I consent to storing this question to produce a fictional reading.
+    </label>
     <button id="ask" type="button">Ask</button>
     <p id="status" class="meta"></p>
     <pre id="result"></pre>
     <script src="config.js"></script>
-    <script src="popup.js"></script>
+    <script type="module" src="popup.js"></script>
   </body>
 </html>
