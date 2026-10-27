@@ -16,3 +16,8 @@ jobs:
       - uses: actions/checkout@v4
       - name: Manifest exists
         run: test -f manifest.json && test -f popup.js
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Tests
+        run: npm test

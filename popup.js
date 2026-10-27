@@ -1,4 +1,11 @@
-const DEMO_USER_ID = globalThis.COSMIC_ARCANA?.demoUserId ?? '00000000-0000-4000-8000-000000000001';
+import {
+  AuthError,
+  askBff,
+  authorizeUrl,
+  exchangeCode,
+  freshSession,
+  revokeRefreshToken,
+} from './auth.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -19,9 +26,6 @@ const randomString = () => {
   return b64url(bytes);
 };
 
-const idempotencyKey = () =>
-  `e${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`;
-
 const redirectUri = () => chrome.identity.getRedirectURL('callback');
 
 const loadSession = async () => {
@@ -29,98 +33,88 @@ const loadSession = async () => {
   return cosmicSession ?? null;
 };
 
+const saveSession = (session) => chrome.storage.local.set({ cosmicSession: session });
+
+const clearSession = () => chrome.storage.local.remove('cosmicSession');
+
 const renderSession = async () => {
   const session = await loadSession();
   $('session').textContent = session?.sub
     ? `Signed in as ${session.sub} (${session.connection ?? 'auth0'})`
-    : 'Not signed in (demo user for spreads).';
-};
-
-const decodeJwtPayload = (token) => {
-  const part = token.split('.')[1];
-  if (!part) {
-    return {};
-  }
-  const padded = part.replace(/-/g, '+').replace(/_/g, '/');
-  return JSON.parse(atob(padded));
+    : 'Not signed in.';
 };
 
 const login = async (connection) => {
-  const { auth0Domain, auth0ClientId } = globalThis.COSMIC_ARCANA ?? {};
-  if (!auth0Domain || !auth0ClientId) {
-    throw new Error('copy config.example.js to config.js and set Auth0 domain + SPA client id');
+  const config = globalThis.COSMIC_ARCANA ?? {};
+  if (!config.auth0Domain || !config.auth0ClientId || !config.auth0Audience) {
+    throw new Error(
+      'copy config.example.js to config.js and set Auth0 domain, SPA client id and API audience',
+    );
   }
 
   const verifier = randomString();
   const challenge = await sha256(verifier);
   const state = randomString();
-  const url = new URL(`https://${auth0Domain}/authorize`);
-  url.searchParams.set('client_id', auth0ClientId);
-  url.searchParams.set('redirect_uri', redirectUri());
-  url.searchParams.set('response_type', 'code');
-  url.searchParams.set('scope', 'openid profile email');
-  url.searchParams.set('code_challenge', challenge);
-  url.searchParams.set('code_challenge_method', 'S256');
-  url.searchParams.set('state', state);
-  url.searchParams.set('connection', connection);
 
   const redirected = await chrome.identity.launchWebAuthFlow({
-    url: url.toString(),
+    url: authorizeUrl({ config, redirectUri: redirectUri(), challenge, state, connection }),
     interactive: true,
   });
-  const redirectedUrl = new URL(redirected);
-  const code = redirectedUrl.searchParams.get('code');
+  const params = new URL(redirected).searchParams;
+  if (params.get('state') !== state) {
+    throw new Error('sign-in response did not match the request');
+  }
+  const code = params.get('code');
   if (!code) {
     throw new Error('no authorization code');
   }
 
-  const tokenResponse = await fetch(`https://${auth0Domain}/oauth/token`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({
-      grant_type: 'authorization_code',
-      client_id: auth0ClientId,
-      code_verifier: verifier,
-      code,
-      redirect_uri: redirectUri(),
-    }),
+  const session = await exchangeCode({
+    config,
+    code,
+    verifier,
+    redirectUri: redirectUri(),
+    connection,
+    fetchImpl: fetch,
+    now: Date.now(),
   });
-  const tokens = await tokenResponse.json();
-  if (!tokenResponse.ok) {
-    throw new Error(tokens.error_description || 'token exchange failed');
-  }
-
-  const claims = decodeJwtPayload(tokens.id_token);
-  await chrome.storage.local.set({
-    cosmicSession: {
-      sub: claims.sub,
-      connection,
-      idToken: tokens.id_token,
-    },
-  });
+  await saveSession(session);
   await renderSession();
 };
 
-const createSpread = async (question) => {
-  const base = (globalThis.COSMIC_ARCANA?.tarotBaseUrl ?? '').replace(/\/$/, '');
-  if (!base) {
-    throw new Error('tarotBaseUrl is empty');
+const ask = async (question) => {
+  const config = globalThis.COSMIC_ARCANA ?? {};
+  if (!config.apiBaseUrl) {
+    throw new Error('apiBaseUrl is empty');
   }
-  const session = await loadSession();
-  const userId = DEMO_USER_ID;
-  const response = await fetch(`${base}/spreads`, {
-    method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-      'idempotency-key': idempotencyKey(),
-    },
-    body: JSON.stringify({ userId, question: question.trim() }),
-  });
-  const body = await response.json().catch(() => null);
-  if (!response.ok) {
-    throw new Error(`tarot ${response.status}`);
+  const stored = await loadSession();
+  if (!stored) {
+    throw new Error('Sign in to ask.');
   }
-  return { body, sessionSub: session?.sub ?? null };
+  const consent = $('consent').checked;
+  if (!consent) {
+    throw new Error('Tick the consent box to ask.');
+  }
+
+  try {
+    const { session, refreshed } = await freshSession({
+      config,
+      session: stored,
+      fetchImpl: fetch,
+      now: Date.now(),
+    });
+    if (refreshed) {
+      await saveSession(session);
+    }
+    return await askBff({ config, session, question, consent, fetchImpl: fetch });
+  } catch (error) {
+    if (error instanceof AuthError && ['invalid_grant', 'unauthorized'].includes(error.code)) {
+      await clearSession();
+      await renderSession();
+      throw new Error('Signed out. Sign in again.');
+    }
+    throw error;
+  }
 };
 
 $('github').addEventListener('click', async () => {
@@ -142,7 +136,13 @@ $('google').addEventListener('click', async () => {
 });
 
 $('logout').addEventListener('click', async () => {
-  await chrome.storage.local.remove('cosmicSession');
+  // Revoking is best effort: signing out locally must work offline too.
+  await revokeRefreshToken({
+    config: globalThis.COSMIC_ARCANA ?? {},
+    session: await loadSession(),
+    fetchImpl: fetch,
+  }).catch(() => {});
+  await clearSession();
   await renderSession();
 });
 
@@ -150,7 +150,7 @@ $('ask').addEventListener('click', async () => {
   $('status').textContent = '';
   $('result').textContent = '';
   try {
-    const { body } = await createSpread($('question').value);
+    const body = await ask($('question').value);
     $('result').textContent = JSON.stringify(body, null, 2);
   } catch (error) {
     $('status').textContent = error.message;
